@@ -1,3 +1,4 @@
+from arch.unitroot.cointegration import DynamicOLS
 from arch.unitroot.unitroot import (
     ADF,
     DFGLS,
@@ -16,4 +17,5 @@ __all__ = [
     "PhillipsPerron",
     "ZivotAndrews",
     "auto_bandwidth",
+    "DynamicOLS",
 ]
