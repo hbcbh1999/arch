@@ -157,12 +157,12 @@ def engle_granger(
     resid = _cross_section(y, x, trend)
     from arch.unitroot.unitroot import ADF
 
-    adf = ADF(resid, lags, trend="n", max_lags=max_lags, method=method)
+    ADF(resid, lags, trend="n", max_lags=max_lags, method=method)
     pass
 
 
 def phillips_ouliaris(y, x, trend="c", lags=None, df_adjust=True):
-    resid = _cross_section(y, x, trend)
+    _cross_section(y, x, trend)
     pass
 
 
