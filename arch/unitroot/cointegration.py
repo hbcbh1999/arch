@@ -32,12 +32,16 @@ def _ic(sse, k, nobs, ic):
 class FMOLS(object):
     pass
 
+
 class CCR(object):
     """canonical cointegration regression estimator"""
+
     pass
+
 
 class DynamicOLS(object):
     """dynamic OLS"""
+
     def __init__(
         self,
         y,
