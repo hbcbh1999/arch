@@ -9,10 +9,9 @@ import os
 from random import shuffle
 from typing import List
 
+from joblib import Parallel, cpu_count, delayed
 import numpy as np
 from numpy.random import PCG64, Generator, SeedSequence
-
-from joblib import Parallel, cpu_count, delayed
 
 ROOT = os.path.join(os.path.split(os.path.abspath(__file__))[0], "engle-granger")
 if not os.path.exists(ROOT):

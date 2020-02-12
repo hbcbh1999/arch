@@ -3,9 +3,10 @@ from typing import Optional
 
 import numpy as np
 from pandas import DataFrame
+from pandas.util._decorators import Substitution
 
 from arch.typing import ArrayLike, NDArray, NDArrayOrFrame
-from arch.utility.array import AbstractDocStringInheritor, ensure2d
+from arch.utility.array import AbstractDocStringInheritor, ensure1d, ensure2d
 from arch.vendor import cached_property
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "TukeyHanning",
     "TukeyParzen",
     "CovarianceEstimate",
+    "CovarianceEstimator",
 ]
 
 
@@ -91,21 +93,51 @@ class CovarianceEstimate(object):
 
 
 class CovarianceEstimator(ABC):
+    r"""
+    Covariance estimation using %(kernel_name)s kernel.
+
+    Parameters
+    ----------
+    x : array_like
+        The data to use in covariance estimation.
+    bandwidth : float, default None
+        The kernel's bandwidth.  If None, optimal bandwidth is estimated.
+    df_adjust : int, default 0
+        Degrees of freedom to remove when adjusting the covariance. Uses the
+        number of observations in x minus df_adjust when dividing
+        inner-products.
+    center : bool, default True
+        A flag indicating whether x should be demeaned before estimating the
+        covariance.
+    weights : array_like, default None
+        An array of weights used to combine when estimating optimal bandwidth.
+        If not provided, a vector of 1s is used. Must have nvar elements.
+
+    Notes
+    -----
+    The kernel weights are computed using
+
+    .. math::
+
+       %(formula)s
+
+    where :math:`z=\frac{h}{H}, h=0, 1, \ldots, H` where H is the bandwidth.
+    """
     _name = ""
 
     def __init__(
         self,
         x: ArrayLike,
-        bandwith: Optional[float] = None,
+        bandwidth: Optional[float] = None,
         df_adjust: int = 0,
         center: bool = True,
         weights: Optional[ArrayLike] = None,
     ):
 
         self._x = ensure2d(x, "x")
-        if bandwith is not None and (not np.isscalar(bandwith) or bandwith < 0):
+        if bandwidth is not None and (not np.isscalar(bandwidth) or bandwidth < 0):
             raise ValueError("bandwith must be a non-negative scalar.")
-        self._bandwidth = bandwith
+        self._bandwidth = bandwidth
         if df_adjust < 0 or not np.isscalar(df_adjust):
             raise ValueError("df_adjust must be a non-negative integer.")
         self._df_adjust = df_adjust
@@ -120,7 +152,8 @@ class CovarianceEstimator(ABC):
         if weights is None:
             xw = self._x_weights = np.ones((self._x.shape[1], 1))
         else:
-            xw = self._x_weights = ensure2d(np.asarray(weights), "weights").T
+            xw = ensure1d(np.asarray(weights), "weights")
+            xw = self._x_weights = xw[:, None]
         if (
             xw.shape[0] != self._x.shape[1]
             or xw.shape[1] != 1
@@ -146,20 +179,39 @@ class CovarianceEstimator(ABC):
 
     @property
     def name(self) -> str:
-        """The covarianc estimator's name."""
+        """
+        The covarianc estimator's name.
+
+        Returns
+        -------
+        str
+            The covariance estimator's name.
+        """
         return self._name
 
     @property
     def centered(self) -> bool:
-        """Flag indicating whether the data are centered (demeaned)."""
-        return self._center
+        """
+        Flag indicating whether the data are centered (demeaned).
 
+
+        Returns
+        -------
+        bool
+            A flag indicating whether the estimator is centered.
+        """
+        return self._center
 
     @property
     @abstractmethod
     def kernel_const(self) -> float:
         """
         The constant used in optimal bandwidth calculation.
+
+        Returns
+        -------
+        float
+            The constant value used in the optimal bandwidth calculation.
         """
         return 1.0
 
@@ -168,6 +220,11 @@ class CovarianceEstimator(ABC):
     def bandwidth_scale(self) -> float:
         """
         The power used in optimal bandwidth calculation.
+
+        Returns
+        -------
+        float
+            The power value used in the optimal bandwidth calculation.
         """
         return 1.0
 
@@ -179,6 +236,11 @@ class CovarianceEstimator(ABC):
 
         Controls the number of lags used in the variance estimate that
         determines the estimate of the optimal bandwidth.
+
+        Returns
+        -------
+        float
+            The rate used in bandwidth selection.
         """
         return 2 / 9
 
@@ -251,7 +313,7 @@ class CovarianceEstimator(ABC):
         Returns
         -------
         CovarianceEstimate
-            Covariance estiamte instance containing 4 estimates:
+            Covariance estimate instance containing 4 estimates:
 
             * long_run
             * short_run
@@ -278,6 +340,12 @@ class CovarianceEstimator(ABC):
         return CovarianceEstimate(sr, oss, labels)
 
 
+bartlett_formula = """\
+w=\\begin{cases} 1-\\left|z\\right| & z\\leq1 \\\\ 0 & z>1 \\end{cases}
+"""
+
+
+@Substitution(kernel_name="Bartlett's (Newey-West)", formula=bartlett_formula)
 class Bartlett(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -296,6 +364,16 @@ class Bartlett(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return (int_bw - np.arange(float(int_bw))) / (int_bw + 1)
 
 
+parzen_formula = """\
+w=\\begin{cases}\
+1-6z^{2}\\left(1-z\\right) & z\\leq\\frac{1}{2} \\\\ \
+2\\left(1-z\\right)^{3} & \\frac{1}{2}<z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases}
+"""
+
+
+@Substitution(kernel_name="Parzen's", formula=parzen_formula)
 class Parzen(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -319,6 +397,15 @@ class Parzen(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return w
 
 
+parzen_reisz_formula = """\
+w=\\begin{cases} \
+1-z^2 & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="the Parzen-Reisz", formula=parzen_reisz_formula)
 class ParzenRiesz(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -338,6 +425,15 @@ class ParzenRiesz(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return 1 - x ** 2
 
 
+parzen_geometric_formula = """\
+w=\\begin{cases} \
+\\frac{1}{1+z} & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="Parzen's Geometric", formula=parzen_geometric_formula)
 class ParzenGeometric(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -357,6 +453,15 @@ class ParzenGeometric(CovarianceEstimator, metaclass=AbstractDocStringInheritor)
         return 1 / (1 + x)
 
 
+parzen_cauchy_formula = """\
+w=\\begin{cases} \
+\\frac{1}{1+z^2} & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="Parzen's Cauchy", formula=parzen_cauchy_formula)
 class ParzenCauchy(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -376,6 +481,15 @@ class ParzenCauchy(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return 1 / (1 + x ** 2)
 
 
+tukey_hamming_formula = """\
+w=\\begin{cases} \
+0.54 + 0.46 \\cos{\\pi z} & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="the Tukey-Hamming", formula=tukey_hamming_formula)
 class TukeyHamming(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -395,6 +509,15 @@ class TukeyHamming(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return 0.54 + 0.46 * np.cos(np.pi * x)
 
 
+tukey_hanning_formula = """\
+w=\\begin{cases} \
+\\frac{1}{2} + \\frac{1}{2} \\cos{\\pi z} & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="the Tukey-Hanning", formula=tukey_hanning_formula)
 class TukeyHanning(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
@@ -414,6 +537,15 @@ class TukeyHanning(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         return 0.5 + 0.5 * np.cos(np.pi * x)
 
 
+tukey_parzen_formula = """\
+w=\\begin{cases} \
+0.436 + 0.564 \\cos{\\pi z} & z\\leq1 \\\\ \
+0 & z>1 \
+\\end{cases} \
+"""
+
+
+@Substitution(kernel_name="the Tukey-Parzen", formula=tukey_parzen_formula)
 class TukeyParzen(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
     @property
     def kernel_const(self) -> float:
