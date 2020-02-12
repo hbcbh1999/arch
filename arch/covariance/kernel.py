@@ -32,10 +32,16 @@ class CovarianceEstimate(object):
     short_run : ndarray
         The short-run covariance estimate.
     one_sided_strict : ndarray
-        THe one-sided strict covariance estimate.
+        The one-sided strict covariance estimate.
     columns : {None, list[str]}
         Column labels to use if covariance estiamtes are returned as
         DataFrames.
+    long_run : ndarray, default None
+        The long-run covariance estimate. If not provided, computed from
+        short_run and one_sided_strict.
+    one_sided_strict : ndarray, default None
+        The one-sided-strict covariance estimate. If not provided, computed
+        from short_run and one_sided_strict.
 
     Notes
     -----
@@ -44,7 +50,7 @@ class CovarianceEstimate(object):
 
     .. math::
 
-        \Gamma_0 + \Lambda_1 + \Lambda_1^\prime
+        \Omega = \Gamma_0 + \Lambda_1 + \Lambda_1^\prime
 
     and the one-sided covariance is
 
@@ -53,12 +59,21 @@ class CovarianceEstimate(object):
         \Lambda_0 = \Gamma_0 + \Lambda_1.
     """
 
-    def __init__(self, short_run: NDArray, one_sided_strict: NDArray, columns=None):
+    def __init__(
+        self,
+        short_run: NDArray,
+        one_sided_strict: NDArray,
+        columns=None,
+        long_run: Optional[NDArray] = None,
+        one_sided: Optional[NDArray] = None,
+    ):
         self._sr = short_run
         self._oss = one_sided_strict
         self._columns = columns
+        self._long_run = long_run
+        self._one_sided = one_sided
 
-    def _wrap(self, value):
+    def _wrap(self, value) -> NDArrayOrFrame:
         if self._columns is not None:
             return DataFrame(value, columns=self._columns, index=self._columns)
         return value
@@ -68,7 +83,11 @@ class CovarianceEstimate(object):
         """
         The long-run covariance estimate.
         """
-        return self._wrap(self._sr + self._oss + self._oss.T)
+        if self._long_run is not None:
+            long_run = self._long_run
+        else:
+            long_run = self._sr + self._oss + self._oss.T
+        return self._wrap(long_run)
 
     @cached_property
     def short_run(self) -> NDArrayOrFrame:
@@ -82,7 +101,11 @@ class CovarianceEstimate(object):
         """
         The one-sided covariance estimate.
         """
-        return self._wrap(self._sr + self._oss)
+        if self._one_sided is not None:
+            one_sided = self._one_sided
+        else:
+            one_sided = self._sr + self._oss
+        return self._wrap(one_sided)
 
     @cached_property
     def one_sided_strict(self) -> NDArrayOrFrame:

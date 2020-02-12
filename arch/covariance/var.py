@@ -1,27 +1,35 @@
-from typing import Optional, Sequence
+from typing import Dict, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 from numpy import column_stack, ones, zeros
 from numpy.linalg import lstsq
+import pandas as pd
 from statsmodels.tools import add_constant
 from statsmodels.tsa.tsatools import lagmat
 
-from arch.covariance.kernel import CovarianceEstimator
+from arch.covariance.kernel import CovarianceEstimate, CovarianceEstimator
 from arch.typing import ArrayLike, NDArray
+
+
+class VARModel(NamedTuple):
+    resids: NDArray
+    params: NDArray
+    var_order: int
+    intercept: bool
 
 
 class PreWhitenRecoloredCovariance(CovarianceEstimator):
     def __init__(
         self,
         x: ArrayLike,
-        kernel: str = "bartlett",
         lags: Optional[int] = None,
         diagonal_lags: Optional[int] = None,
         method: str = "aic",
         max_lag: Optional[int] = None,
         diagonal: bool = True,
+        kernel: str = "bartlett",
         bandwidth: Optional[float] = None,
-        df_adjust: int = 0,
+        df_adjust: Optional[int] = None,
         center: bool = True,
         weights: Optional[ArrayLike] = None,
     ):
@@ -60,7 +68,7 @@ class PreWhitenRecoloredCovariance(CovarianceEstimator):
                 best_resids = resid.copy()
         return np.argmin(ic), best_resids
 
-    def _select_lags(self):
+    def _select_lags(self) -> Tuple[int, Tuple[int, ...]]:
         nobs, nvar = self._x.shape
         max_lag = int(nobs ** (1 / 3))
         # Ensure at least nvar obs left over
@@ -79,11 +87,11 @@ class PreWhitenRecoloredCovariance(CovarianceEstimator):
         rhs_data = [[] for _ in range(max_lag)]
         indiv_lags = []
         for i in range(nvar):
-            r, l = lagmat(self._x[:, i], max_lag, trim="both", original="sep")
-            lhs_data.append(l)
-            indiv_lags.append(r)
+            lags, lead = lagmat(self._x[:, i], max_lag, trim="both", original="sep")
+            lhs_data.append(lead)
+            indiv_lags.append(lags)
             for k in range(max_lag):
-                rhs_data[k].append(r[:, [k]])
+                rhs_data[k].append(lags[:, [k]])
 
         lhs = column_stack(lhs_data)
         rhs = column_stack([column_stack(r) for r in rhs_data])
@@ -92,8 +100,7 @@ class PreWhitenRecoloredCovariance(CovarianceEstimator):
             rhs = add_constant(rhs, True)
         c = int(self._center)
         lhs_obs = lhs.shape[0]
-        ic = zeros(max_lag + 1)
-        ics = {}
+        ics: Dict[Tuple[int, Tuple[int, ...]], float] = {}
         for i in range(max_lag + 1):
             indiv_lag_len = []
             x = rhs[:, : (i * nvar) + c]
@@ -122,11 +129,89 @@ class PreWhitenRecoloredCovariance(CovarianceEstimator):
         models = [key for key in ics.keys()]
         return models[ic.argmin()]
 
-    def _estimate_var(self, common: int, individual: Sequence[int]):
+    def _estimate_var(self, common: int, individual: Sequence[int]) -> VARModel:
+        nobs, nvar = self._x.shape
+        center = int(self._center)
         max_lag = max(common, max(individual))
+        lhs = np.empty((nobs - max_lag, nvar))
+        extra_lags = []
+        rhs = np.empty((nobs - max_lag, nvar * common + center))
+        if self._center:
+            rhs[:, 0] = 1
+        for i in range(nvar):
+            lags, lead = lagmat(self._x[:, i], max_lag, trim="both", original="sep")
+            lhs[:, i : i + 1] = lead
+            extra_lags.append(lags[:, common : individual[i]])
+            for k in range(common):
+                rhs[:, center + i + nvar * k] = lags[:, k]
+        params = zeros((nvar, nvar * max_lag + center))
+        resids = np.empty_like(lhs)
+        ncommon = rhs.shape[1]
+        for i in range(nvar):
+            full_rhs = np.hstack([rhs, extra_lags[i]])
+
+            single_params = np.linalg.lstsq(full_rhs, lhs[:, i], rcond=None)[0]
+            params[i, :ncommon] = single_params[:ncommon]
+            locs = ncommon + nvar * np.arange(extra_lags[1].shape[1])
+            params[i, locs] = single_params[ncommon:]
+            resids[:, i] = lhs[:, i] - full_rhs @ single_params
+        return VARModel(resids, params, max_lag, self._center)
+
+    def _setup_lags(self) -> Tuple[int, Tuple[int, ...]]:
+        nvar = self._x.shape[1]
+        common = 0
+        indiv = (0,) * nvar
+        if self._lags is None and self._diagonal_lags is None:
+            return self._select_lags()
+        if self._lags is not None:
+            common = self._lags
+        if self._diagonal_lags is not None:
+            indiv = (self._diagonal_lags,) * nvar
+        return common, indiv
+
+    def _companion_form(self, var_model: VARModel, short_run: NDArray):
+        nvar = var_model.resids.shape[1]
+        nlag = var_model.var_order
+        coeffs = zeros((nvar * nlag, nvar * nlag))
+        coeffs[:nvar] = var_model.params[:, var_model.intercept :]
+        for i in range(nlag - 1):
+            coeffs[(i + 1) * nvar : (i + 2) * nvar, i * nvar : (i + 1) * nvar] = np.eye(
+                nvar
+            )
+        sigma = zeros((nvar * nlag, nvar * nlag))
+        sigma[:nvar, :nvar] = short_run
+        return coeffs, sigma
 
     def cov(self):
-        pass
+        x = self._x
+        common, individual = self._select_lags()
+        var_mod = self._estimate_var(common, individual)
+        resids = var_mod.resids
+        nobs, nvar = resids.shape
+        short_run = resids.T @ resids / nobs
+        coeff_sum = zeros((nvar, nvar))
+        params = var_mod.params[:, var_mod.intercept :]
+        for i in range(var_mod.var_order):
+            coeff_sum += params[:, i * nvar : (i + 1) * nvar]
+        d = np.linalg.inv(np.eye(nvar) - coeff_sum)
+        scale = nobs / (nobs - nvar)
+        long_run = scale * (d @ short_run @ d)
+        comp_coefs, comp_sigma = self._companion_form(var_mod, short_run)
+        comp_nvar = comp_coefs.shape[0]
+        i_minus_coefs_inv = np.linalg.inv(np.eye(comp_nvar) - comp_coefs)
+        one_sided = scale * i_minus_coefs_inv @ comp_sigma
+        one_sided = one_sided[:nvar, :nvar]
+        one_sided_strict = scale * comp_coefs @ i_minus_coefs_inv @ comp_sigma
+        one_sided_strict = one_sided_strict[:nvar, :nvar]
+        columns = x.columns if isinstance(x, pd.DataFrame) else None
+
+        return CovarianceEstimate(
+            short_run,
+            one_sided_strict,
+            columns=columns,
+            long_run=long_run,
+            one_sided=one_sided,
+        )
 
     def bandwidth_scale(self) -> float:
         return 1.0

@@ -6,6 +6,7 @@ import glob
 import numpy as np
 import scipy.stats as stats
 from statsmodels.regression.linear_model import OLS, WLS
+
 from yapf.yapflib.yapf_api import FormatCode
 
 PERCENTILES = list(np.arange(0.1, 1.0, 0.1)) + list(np.arange(1.0, 100.0, 0.5))
