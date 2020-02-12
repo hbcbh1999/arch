@@ -8,6 +8,18 @@ from arch.typing import ArrayLike, NDArray, NDArrayOrFrame
 from arch.utility.array import AbstractDocStringInheritor, ensure2d
 from arch.vendor import cached_property
 
+__all__ = [
+    "Bartlett",
+    "Parzen",
+    "ParzenCauchy",
+    "ParzenGeometric",
+    "ParzenRiesz",
+    "TukeyHamming",
+    "TukeyHanning",
+    "TukeyParzen",
+    "CovarianceEstimate",
+]
+
 
 class CovarianceEstimate(object):
     r"""
@@ -106,17 +118,17 @@ class CovarianceEstimator(ABC):
             )
         self._center = center
         if weights is None:
-            xw = self._x_weights = np.ones((self._x.shape[0], 1))
+            xw = self._x_weights = np.ones((self._x.shape[1], 1))
         else:
             xw = self._x_weights = ensure2d(np.asarray(weights), "weights").T
         if (
-            xw.shape[1] != self._x.shape[1]
-            or xw.shape[0] != 1
+            xw.shape[0] != self._x.shape[1]
+            or xw.shape[1] != 1
             or np.any(xw < 0)
             or np.all(xw == 0)
         ):
             raise ValueError(
-                f"weights must be a 1 by {self._x.shape[1]} (x.shape[1])"
+                f"weights must be a 1 by {self._x.shape[1]} (x.shape[1]) "
                 f"array with non-negative values where at least one value is "
                 "strictly greater than 0."
             )
@@ -134,30 +146,33 @@ class CovarianceEstimator(ABC):
 
     @property
     def name(self) -> str:
+        """The covarianc estimator's name."""
         return self._name
 
     @property
     def centered(self) -> bool:
+        """Flag indicating whether the data are centered (demeaned)."""
         return self._center
 
-    @abstractmethod
+
     @property
+    @abstractmethod
     def kernel_const(self) -> float:
         """
         The constant used in optimal bandwidth calculation.
         """
         return 1.0
 
-    @abstractmethod
     @property
+    @abstractmethod
     def bandwidth_scale(self) -> float:
         """
         The power used in optimal bandwidth calculation.
         """
         return 1.0
 
-    @abstractmethod
     @property
+    @abstractmethod
     def rate(self) -> float:
         """
         The optimal rate used in bandwidth selection.
@@ -228,6 +243,7 @@ class CovarianceEstimator(ABC):
             bw = self.opt_bandwidth
         return self._weights(bw)
 
+    @cached_property
     def cov(self) -> CovarianceEstimate:
         """
         The estimated covariances.
@@ -297,8 +313,9 @@ class Parzen(CovarianceEstimator, metaclass=AbstractDocStringInheritor):
         int_bw = int(bw)
         x = np.arange(float(int_bw)) / (float(int_bw) + 1)
         w = np.empty_like(x)
-        w[x <= 0.5] = 1 - 6 * x ** 2 * (1 - x)
-        w[x > 0.5] = 2 * (1 - x) ** 3
+        loc = x <= 0.5
+        w[loc] = 1 - 6 * x[loc] ** 2 * (1 - x[loc])
+        w[~loc] = 2 * (1 - x[~loc]) ** 3
         return w
 
 

@@ -5,7 +5,7 @@ from numpy.linalg import lstsq
 
 from arch.typing import ArrayLike
 
-from .covariance import CovarianceEstimator
+from .kernel import CovarianceEstimator
 
 
 class PreWhitenRecoloredCovariance(CovarianceEstimator):
