@@ -9,6 +9,7 @@ from statsmodels.tools import add_constant
 from statsmodels.tsa.tsatools import add_trend
 
 from arch.typing import ArrayLike1D, ArrayLike2D
+from arch.unitroot.critical_values.engle_granger import EngleGrangerCV
 from arch.utility.array import ensure1d, ensure2d
 
 
@@ -137,8 +138,6 @@ class DynamicOLS(object):
 def _cross_section(y, x, trend):
     if trend not in ("n", "c", "ct", "t"):
         raise ValueError('trend must be one of "n", "c", "ct" or "t"')
-    y = np.asarray(ensure1d(y, "x", False))
-    x = np.asarray(ensure2d(x, "x"))
     x = add_trend(x, trend)
     res = OLS(y, x).fit()
     return res.resid
@@ -154,11 +153,17 @@ def engle_granger(
     method: str = "aic",
     df_adjust: Union[bool, int] = True,
 ):
+
+    y = np.asarray(ensure1d(y, "x", False))
+    x = np.asarray(ensure2d(x, "x"))
     resid = _cross_section(y, x, trend)
     from arch.unitroot.unitroot import ADF
 
-    ADF(resid, lags, trend="n", max_lags=max_lags, method=method)
-    pass
+    adf = ADF(resid, lags, trend="n", max_lags=max_lags, method=method)
+    # TODO: pvalue, crit val method need to be better
+    eg_cv = EngleGrangerCV()
+    cv = pd.Series({p: eg_cv[trend, p, x.shape[1] + 1] for p in (10, 5, 1)})
+    return CointegrationTestResult(adf.stat, adf.pvalue, cv, "Engle-Granger Test")
 
 
 def phillips_ouliaris(y, x, trend="c", lags=None, df_adjust=True):
@@ -177,25 +182,39 @@ class CointegrationTestResult(object):
         self._null = "No Cointegration"
         self._alternative = "Cointegration"
 
+    @property
     def stat(self) -> float:
         return self._stat
 
+    @property
     def pvalue(self) -> float:
         return self._pvalue
 
+    @property
     def crit_vals(self) -> pd.Series:
         return self._crit_vals
 
+    @property
     def null(self) -> str:
         return self._null
 
+    @property
     def alternative(self) -> str:
         return self._alternative
 
     def __str__(self) -> str:
-        out = f"{self._name}\nStatistic:{self._stat}\nP-value:{self.pvalue()}"
+        out = f"{self._name}\nStatistic:{self._stat}\nP-value:{self.pvalue}"
         out += f"\nNull: {self._null}, Alternative: {self._alternative}"
+        cv_str = ", ".join([f"{k}%: {v}" for k, v in self.crit_vals.items()])
+        out += f"\nCrit. Vals: {cv_str}"
         return out
 
     def __repr__(self):
         return self.__str__() + f"\nID: {hex(id(self))}"
+
+
+g = np.random.default_rng(0)
+y = g.standard_normal((500, 1))
+y = np.cumsum(y, 0)
+x = y + g.standard_normal((500, 1))
+print(engle_granger(y, x))

@@ -182,6 +182,7 @@ eg_cv = {
 
 
 class EngleGrangerCV(object):
+    # TODO: Improve to provide CVs directly as a function of T
     def __getitem__(self, item):
         # item ['nc',10,3]
         if (
